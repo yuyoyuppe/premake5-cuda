@@ -25,6 +25,12 @@ premake.api.register {
 }
 
 premake.api.register {
+    name = "cudaLinkFiles",
+    scope = "config",
+    kind = "table"
+}
+
+premake.api.register {
     name = "cudaFastMath",
     scope = "config",
     kind = "boolean"

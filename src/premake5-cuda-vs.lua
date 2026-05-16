@@ -20,9 +20,24 @@ local function writeTableAsOneString(property, values)
   end
 end
 
+local function hasCudaProjectItems(prj)
+  return prj.project.cudaFiles ~= nil or
+         prj.project.cudaPTXFiles ~= nil or
+         prj.project.cudaLinkFiles ~= nil
+end
+
 local function addLinkerProps(cfg)
-  if cfg.cudaLinkerOptions ~= nil then
+  local needsStaticLibDeviceLinkOverride =
+    cfg.kind == "StaticLib" and
+    (cfg.cudaRelocatableCode == true or cfg.cudaRelocatableCode == "On" or
+     cfg.cudaExtensibleWholeProgram == true or cfg.cudaExtensibleWholeProgram == "On")
+
+  if cfg.cudaLinkerOptions ~= nil or needsStaticLibDeviceLinkOverride then
       premake.w('<CudaLink>')
+      if needsStaticLibDeviceLinkOverride then
+        -- Static libraries should archive relocatable device objects; final binaries do device-link.
+        writeBoolean('PerformDeviceLink', false)
+      end
       writeTableAsOneString('AdditionalOptions', cfg.cudaLinkerOptions)
       premake.w('</CudaLink>')
   end
@@ -120,6 +135,18 @@ local function inlineFileWritePTX(value)
   premake.w('\t</CudaCompile>')
 end
 
+--* Write CUDA device-link inputs. Useful for final binaries linking CUDA static libraries.
+local function inlineCudaLinkFileWrite(value, cfg)
+  local e = { }
+  e.cfg = cfg
+  local deviceLinkInput = path.translate(premake.detoken.expand(value, e), "\\")
+  premake.w('\t<CudaLink Include=' .. string.escapepattern('"') .. deviceLinkInput ..
+                string.escapepattern('"') .. ' ' .. premake.vstudio.vc2010.condition(cfg) .. '>')
+  premake.w('\t\t<PerformDeviceLink>true</PerformDeviceLink>')
+  premake.w('\t\t<Inputs>' .. deviceLinkInput .. '</Inputs>')
+  premake.w('\t</CudaLink>')
+end
+
 --* Check the glob and match all files.
 local function checkForGlobPTX(value)
   --* Absolute paths are easy to parse.
@@ -148,6 +175,14 @@ local function cudaProjectProps(prj)
 
   table.foreachi(prj.project.cudaFiles, checkForGlob)
   table.foreachi(prj.project.cudaPTXFiles, checkForGlobPTX)
+  for cfg in premake.project.eachconfig(prj) do
+    local cudaLinkFiles = cfg.cudaLinkFiles or prj.project.cudaLinkFiles
+    if cudaLinkFiles ~= nil then
+      for _, value in ipairs(cudaLinkFiles) do
+        inlineCudaLinkFileWrite(value, cfg)
+      end
+    end
+  end
 
   premake.w('</ItemGroup>')
 end
@@ -158,7 +193,7 @@ premake.override(premake.vstudio.vc2010.elements, "project", function(base, prj)
   local calls = base(prj)
 
   --* Only enabled if cudaProject defined.
-  if (prj.project.cudaFiles ~= nil or prj.project.cudaPTXFiles ~= nil) then
+  if hasCudaProjectItems(prj) then
     table.insertafter(calls, premake.vstudio.vc2010.files, cudaProjectProps)
   end
 
@@ -169,7 +204,7 @@ end)
 premake.override(premake.vstudio.vc2010.elements, "itemDefinitionGroup", function(oldfn, cfg)
   local items = oldfn(cfg)
   --* Only enabled if cudaProject defined.
-  if (cfg.project.cudaFiles ~= nil or cfg.project.cudaPTXFiles ~= nil) then
+  if hasCudaProjectItems(cfg) then
     table.insert(items, addCompilerProps)
     table.insert(items, addLinkerProps)
   end
@@ -179,7 +214,7 @@ end)
 --* Add globals
 premake.override(premake.vstudio.vc2010.elements, "globals", function(base, prj)
   local calls = base(prj)
-  if (prj.project.cudaFiles ~= nil or prj.project.cudaPTXFiles ~= nil) then
+  if hasCudaProjectItems(prj) then
     table.insertafter(calls, prj.projectGuid, addGlobals)
   end
   return calls
