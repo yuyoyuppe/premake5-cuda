@@ -20,6 +20,17 @@ local function writeTableAsOneString(property, values)
   end
 end
 
+local function getCudaRuntime(cfg)
+  local isDebugRuntime = cfg.runtime == "Debug"
+  local isStaticRuntime = cfg.staticruntime == true or cfg.staticruntime == "On" or cfg.staticruntime == "on"
+
+  if isStaticRuntime then
+    return isDebugRuntime and "MTd" or "MT"
+  end
+
+  return isDebugRuntime and "MDd" or "MD"
+end
+
 local function hasCudaProjectItems(prj)
   return prj.project.cudaFiles ~= nil or
          prj.project.cudaPTXFiles ~= nil or
@@ -31,13 +42,16 @@ local function addLinkerProps(cfg)
     cfg.kind == "StaticLib" and
     (cfg.cudaRelocatableCode == true or cfg.cudaRelocatableCode == "On" or
      cfg.cudaExtensibleWholeProgram == true or cfg.cudaExtensibleWholeProgram == "On")
+  local needsCudaLinkDefaults =
+    cfg.cudaLinkFiles ~= nil or cfg.project.cudaLinkFiles ~= nil or needsStaticLibDeviceLinkOverride
 
-  if cfg.cudaLinkerOptions ~= nil or needsStaticLibDeviceLinkOverride then
+  if cfg.cudaLinkerOptions ~= nil or needsCudaLinkDefaults then
       premake.w('<CudaLink>')
       if needsStaticLibDeviceLinkOverride then
         -- Static libraries should archive relocatable device objects; final binaries do device-link.
         writeBoolean('PerformDeviceLink', false)
       end
+      writeString('Runtime', getCudaRuntime(cfg))
       writeTableAsOneString('AdditionalOptions', cfg.cudaLinkerOptions)
       premake.w('</CudaLink>')
   end
